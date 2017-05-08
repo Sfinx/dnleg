@@ -1,0 +1,72 @@
+version: "2"
+
+services:
+  nginx:
+    restart: always
+    image: nginx
+    container_name: nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/etc/nginx/conf.d"
+      - "/etc/nginx/vhost.d"
+      - "/usr/share/nginx/html:/usr/share/nginx/html"
+      - "/etc/nginx/certs:/etc/nginx/certs:ro"
+
+  nginx-gen:
+    restart: always
+    depends_on:
+      - nginx
+    image: jwilder/docker-gen
+    container_name: nginx-gen
+    volumes:
+      - "/var/run/docker.sock:/tmp/docker.sock:ro"
+      - "./proxy/templates/nginx.tmpl:/etc/docker-gen/templates/nginx.tmpl:ro"
+    volumes_from:
+      - nginx
+    entrypoint: /usr/local/bin/docker-gen -notify-sighup nginx -watch -wait 5s:30s /etc/docker-gen/templates/nginx.tmpl /etc/nginx/conf.d/default.conf
+
+  letsencrypt-nginx-proxy-companion:
+    restart: always
+    image: jrcs/letsencrypt-nginx-proxy-companion
+    container_name: letsencrypt-nginx-proxy-companion
+    volumes_from:
+      - nginx
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "/etc/nginx/certs:/etc/nginx/certs:rw"
+    environment:
+      - NGINX_DOCKER_GEN_CONTAINER=nginx-gen
+
+  wiki:
+    restart: always
+    depends_on:
+      - nginx-gen
+    image: wiki-website
+    build: ./websites/wiki
+    container_name: wiki-vhost
+    volumes:
+      - "./websites/wiki/html:/usr/share/nginx/html:ro"
+      - "/etc/nginx/auth:/etc/nginx/auth:ro"
+    environment:
+      - VIRTUAL_HOST=wiki.sfinx.in
+      - VIRTUAL_NETWORK=nginx-proxy
+      - VIRTUAL_PORT=80
+      - LETSENCRYPT_HOST=wiki.sfinx.in
+      - LETSENCRYPT_EMAIL=wiki@dev.null
+
+  gogs:
+    restart: always
+    depends_on:
+      - nginx-gen
+    image: sfinx-gogs
+    container_name: gogs
+    volumes:
+      - "/opt/gogs:/data"
+    environment:
+      - VIRTUAL_HOST=git.sfinx.in
+      - VIRTUAL_NETWORK=nginx-proxy
+      - VIRTUAL_PORT=3000
+      - LETSENCRYPT_HOST=git.sfinx.in
+      - LETSENCRYPT_EMAIL=git@dev.null
